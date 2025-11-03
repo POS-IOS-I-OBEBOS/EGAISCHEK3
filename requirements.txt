@@ -1,3 +1,2 @@
 python-telegram-bot==20.6
-pylibdmtx==0.1.10
-Pillow==10.1.0
+cloudmersive-barcode-api-client==3.0.2

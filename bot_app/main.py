@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image
-from pylibdmtx.pylibdmtx import decode
+import cloudmersive_barcode_api_client
+from cloudmersive_barcode_api_client.rest import ApiException
 from telegram import Update
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
@@ -43,6 +43,7 @@ def setup_logging() -> None:
 @dataclass
 class BotConfig:
     token: str
+    api_key: str
 
     @classmethod
     def load(cls) -> Optional["BotConfig"]:
@@ -50,21 +51,36 @@ class BotConfig:
             try:
                 data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
                 token = data.get("token", "").strip()
-                if token:
+                api_key = data.get("api_key", "").strip()
+                if token and api_key:
                     logging.info("Конфигурация успешно загружена")
-                    return cls(token=token)
+                return cls(token=token, api_key=api_key)
             except json.JSONDecodeError as exc:
                 logging.error("Ошибка чтения config.json: %s", exc)
         return None
 
     def save(self) -> None:
-        CONFIG_FILE.write_text(json.dumps({"token": self.token}, ensure_ascii=False, indent=2), encoding="utf-8")
-        logging.info("Токен сохранен в config.json")
+        CONFIG_FILE.write_text(
+            json.dumps({"token": self.token, "api_key": self.api_key}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logging.info("Конфигурация сохранена в config.json")
 
 
 class TokenDialog(simpledialog.Dialog):
     def body(self, master):
         tk.Label(master, text="Введите токен телеграм-бота:").grid(row=0, column=0, padx=10, pady=10)
+        self.entry = tk.Entry(master, width=50, show="*")
+        self.entry.grid(row=1, column=0, padx=10)
+        return self.entry
+
+    def apply(self):
+        self.result = self.entry.get().strip()
+
+
+class ApiKeyDialog(simpledialog.Dialog):
+    def body(self, master):
+        tk.Label(master, text="Введите ключ Cloudmersive API:").grid(row=0, column=0, padx=10, pady=10)
         self.entry = tk.Entry(master, width=50, show="*")
         self.entry.grid(row=1, column=0, padx=10)
         return self.entry
@@ -89,13 +105,17 @@ class BotApp:
         self._application: Optional[Application] = None
         self._bot_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        self._barcode_api: Optional[cloudmersive_barcode_api_client.BarcodeScanApi] = None
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(200, self.poll_log_queue)
 
         self.config = self.ensure_config()
-        if self.config is None:
-            messagebox.showerror("Ошибка", "Токен не был задан. Работа приложения завершена.")
+        if self.config is None or not self.config.token or not self.config.api_key:
+            messagebox.showerror(
+                "Ошибка",
+                "Не заданы данные конфигурации. Работа приложения завершена.",
+            )
             self.root.destroy()
             return
 
@@ -103,15 +123,26 @@ class BotApp:
         self.start_bot_thread()
 
     def ensure_config(self) -> Optional[BotConfig]:
-        config = BotConfig.load()
-        if config:
-            return config
+        loaded_config = BotConfig.load()
+        token = loaded_config.token if loaded_config else ""
+        api_key = loaded_config.api_key if loaded_config else ""
 
-        dialog = TokenDialog(self.root)
-        token = dialog.result
+        if token and api_key:
+            return loaded_config
+
         if not token:
-            return None
-        config = BotConfig(token=token)
+            dialog = TokenDialog(self.root)
+            token = dialog.result or ""
+            if not token:
+                return None
+
+        if not api_key:
+            dialog = ApiKeyDialog(self.root)
+            api_key = dialog.result or ""
+            if not api_key:
+                return None
+
+        config = BotConfig(token=token, api_key=api_key)
         config.save()
         return config
 
@@ -143,11 +174,23 @@ class BotApp:
 
     def run_bot(self) -> None:
         assert self.config is not None
-        asyncio.run(self._run_async_bot(self.config.token))
+        asyncio.run(self._run_async_bot(self.config))
 
-    async def _run_async_bot(self, token: str) -> None:
+    async def _run_async_bot(self, config: BotConfig) -> None:
         logging.info("Инициализация телеграм-бота")
-        application = ApplicationBuilder().token(token).concurrent_updates(True).build()
+
+        try:
+            configuration = cloudmersive_barcode_api_client.Configuration()
+            configuration.api_key["Apikey"] = config.api_key
+            api_client = cloudmersive_barcode_api_client.ApiClient(configuration)
+            self._barcode_api = cloudmersive_barcode_api_client.BarcodeScanApi(api_client)
+        except Exception as exc:
+            logging.exception("Не удалось инициализировать Cloudmersive API клиент: %s", exc)
+            self.update_status("Ошибка инициализации Cloudmersive API")
+            messagebox.showerror("Ошибка", f"Не удалось инициализировать Cloudmersive API: {exc}")
+            return
+
+        application = ApplicationBuilder().token(config.token).concurrent_updates(True).build()
 
         application.add_handler(CommandHandler("start", self.cmd_start))
         application.add_handler(CommandHandler("help", self.cmd_help))
@@ -226,8 +269,13 @@ class BotApp:
         await telegram_file.download_to_drive(custom_path=str(tmp_path))
         logging.info("Изображение скачано: %s", tmp_path)
 
+        if self._barcode_api is None:
+            await message.reply_text("Сервис распознавания недоступен.")
+            logging.error("Cloudmersive API клиент не инициализирован")
+            return
+
         try:
-            decoded_text = await asyncio.to_thread(decode_datamatrix, tmp_path)
+            decoded_text = await asyncio.to_thread(decode_datamatrix, tmp_path, self._barcode_api)
             if decoded_text:
                 await message.reply_text(f"Найденный код: {decoded_text}")
                 logging.info("Код успешно распознан: %s", decoded_text)
@@ -241,13 +289,45 @@ class BotApp:
                 logging.warning("Не удалось удалить временный файл %s", tmp_path)
 
 
-def decode_datamatrix(image_path: Path) -> Optional[str]:
-    image = Image.open(image_path)
-    image = image.convert("RGB")
-    results = decode(image)
-    if not results:
+def decode_datamatrix(
+    image_path: Path, barcode_api: cloudmersive_barcode_api_client.BarcodeScanApi
+) -> Optional[str]:
+    try:
+        with image_path.open("rb") as image_file:
+            response = barcode_api.barcode_scan_image(image_file=image_file)
+    except ApiException as exc:
+        logging.error("Ошибка Cloudmersive API при распознавании: %s", exc)
         return None
-    return results[0].data.decode("utf-8", errors="ignore")
+    except Exception as exc:
+        logging.exception("Не удалось отправить изображение в Cloudmersive API: %s", exc)
+        return None
+
+    if response is None:
+        logging.warning("Пустой ответ от Cloudmersive API")
+        return None
+
+    barcodes = (
+        getattr(response, "barcodes", None)
+        or getattr(response, "Barcodes", None)
+        or getattr(response, "barcode_results", None)
+        or getattr(response, "BarcodeResults", None)
+    )
+
+    if not barcodes:
+        logging.info("Cloudmersive API не вернул распознанные штрихкоды")
+        return None
+
+    for barcode in barcodes:
+        value = (
+            getattr(barcode, "barcode_value", None)
+            or getattr(barcode, "BarcodeValue", None)
+            or getattr(barcode, "value", None)
+        )
+        if value:
+            return str(value)
+
+    logging.info("Cloudmersive API не предоставил текст распознанного кода")
+    return None
 
 
 def main() -> None:
