@@ -129,6 +129,34 @@ class ApiSidDialog(simpledialog.Dialog):
             self.entry.insert(0, clipboard_text.strip())
 
 
+class ApiSidDialog(simpledialog.Dialog):
+    def body(self, master):
+        tk.Label(master, text="Введите Aspose Barcode Cloud App SID:").grid(row=0, column=0, padx=10, pady=10)
+        master.grid_columnconfigure(0, weight=1)
+        self.entry = tk.Entry(master, width=50, show="*")
+        self.entry.grid(row=1, column=0, padx=(10, 0), pady=(0, 10), sticky="ew")
+
+        paste_button = tk.Button(master, text="Вставить", command=self.paste_from_clipboard)
+        paste_button.grid(row=1, column=1, padx=(5, 10), pady=(0, 10))
+        self.entry = tk.Entry(master, width=50, show="*")
+        self.entry.grid(row=1, column=0, padx=10)
+        return self.entry
+
+    def apply(self):
+        self.result = self.entry.get().strip()
+
+    def paste_from_clipboard(self) -> None:
+        try:
+            clipboard_text = self.entry.clipboard_get()
+        except tk.TclError:
+            messagebox.showwarning("Буфер обмена", "Буфер обмена не содержит текст")
+            return
+
+        if clipboard_text:
+            self.entry.delete(0, tk.END)
+            self.entry.insert(0, clipboard_text.strip())
+
+
 class ApiKeyDialog(simpledialog.Dialog):
     def body(self, master):
         tk.Label(master, text="Введите Aspose Barcode Cloud App Key:").grid(row=0, column=0, padx=10, pady=10)
@@ -384,6 +412,7 @@ def decode_datamatrix(
                 fast_scan_only=False,
                 image=image_data,
             )
+        response = barcode_api.barcode_scan_image(image_file=str(image_path))
     except ApiException as exc:
         logging.error("Ошибка Aspose Barcode Cloud при распознавании: %s", exc)
         return None
