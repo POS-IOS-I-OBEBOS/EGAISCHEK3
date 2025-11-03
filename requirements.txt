@@ -1,2 +1,2 @@
 python-telegram-bot==20.6
-cloudmersive-barcode-api-client==3.0.2
+aspose-barcode-cloud==25.10.0
