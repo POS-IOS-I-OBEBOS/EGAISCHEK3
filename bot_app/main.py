@@ -293,8 +293,7 @@ def decode_datamatrix(
     image_path: Path, barcode_api: cloudmersive_barcode_api_client.BarcodeScanApi
 ) -> Optional[str]:
     try:
-        with image_path.open("rb") as image_file:
-            response = barcode_api.barcode_scan_image(image_file=image_file)
+        response = barcode_api.barcode_scan_image(image_file=str(image_path))
     except ApiException as exc:
         logging.error("Ошибка Cloudmersive API при распознавании: %s", exc)
         return None
