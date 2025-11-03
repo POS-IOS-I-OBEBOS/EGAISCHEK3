@@ -97,6 +97,8 @@ class ApiSidDialog(simpledialog.Dialog):
 
         paste_button = tk.Button(master, text="Вставить", command=self.paste_from_clipboard)
         paste_button.grid(row=1, column=1, padx=(5, 10), pady=(0, 10))
+        self.entry = tk.Entry(master, width=50, show="*")
+        self.entry.grid(row=1, column=0, padx=10)
         return self.entry
 
     def apply(self):
@@ -369,6 +371,7 @@ def decode_datamatrix(
                 fast_scan_only=False,
                 image=image_data,
             )
+        response = barcode_api.barcode_scan_image(image_file=str(image_path))
     except ApiException as exc:
         logging.error("Ошибка Aspose Barcode Cloud при распознавании: %s", exc)
         return None
