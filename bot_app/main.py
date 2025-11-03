@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import cloudmersive_barcode_api_client
-from cloudmersive_barcode_api_client.rest import ApiException
+import aspose_barcode_cloud
+from aspose_barcode_cloud.rest import ApiException
 from telegram import Update
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
@@ -43,6 +43,7 @@ def setup_logging() -> None:
 @dataclass
 class BotConfig:
     token: str
+    api_sid: str
     api_key: str
 
     @classmethod
@@ -51,17 +52,26 @@ class BotConfig:
             try:
                 data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
                 token = data.get("token", "").strip()
-                api_key = data.get("api_key", "").strip()
-                if token and api_key:
+                api_sid = data.get("api_sid", "").strip() or data.get("app_sid", "").strip()
+                api_key = data.get("api_key", "").strip() or data.get("app_key", "").strip()
+                if token and api_sid and api_key:
                     logging.info("Конфигурация успешно загружена")
-                return cls(token=token, api_key=api_key)
+                return cls(token=token, api_sid=api_sid, api_key=api_key)
             except json.JSONDecodeError as exc:
                 logging.error("Ошибка чтения config.json: %s", exc)
         return None
 
     def save(self) -> None:
         CONFIG_FILE.write_text(
-            json.dumps({"token": self.token, "api_key": self.api_key}, ensure_ascii=False, indent=2),
+            json.dumps(
+                {
+                    "token": self.token,
+                    "api_sid": self.api_sid,
+                    "api_key": self.api_key,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
             encoding="utf-8",
         )
         logging.info("Конфигурация сохранена в config.json")
@@ -78,9 +88,20 @@ class TokenDialog(simpledialog.Dialog):
         self.result = self.entry.get().strip()
 
 
+class ApiSidDialog(simpledialog.Dialog):
+    def body(self, master):
+        tk.Label(master, text="Введите Aspose Barcode Cloud App SID:").grid(row=0, column=0, padx=10, pady=10)
+        self.entry = tk.Entry(master, width=50, show="*")
+        self.entry.grid(row=1, column=0, padx=10)
+        return self.entry
+
+    def apply(self):
+        self.result = self.entry.get().strip()
+
+
 class ApiKeyDialog(simpledialog.Dialog):
     def body(self, master):
-        tk.Label(master, text="Введите ключ Cloudmersive API:").grid(row=0, column=0, padx=10, pady=10)
+        tk.Label(master, text="Введите Aspose Barcode Cloud App Key:").grid(row=0, column=0, padx=10, pady=10)
         self.entry = tk.Entry(master, width=50, show="*")
         self.entry.grid(row=1, column=0, padx=10)
         return self.entry
@@ -105,13 +126,18 @@ class BotApp:
         self._application: Optional[Application] = None
         self._bot_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
-        self._barcode_api: Optional[cloudmersive_barcode_api_client.BarcodeScanApi] = None
+        self._barcode_api: Optional["aspose_barcode_cloud.BarcodeApi"] = None
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(200, self.poll_log_queue)
 
         self.config = self.ensure_config()
-        if self.config is None or not self.config.token or not self.config.api_key:
+        if (
+            self.config is None
+            or not self.config.token
+            or not self.config.api_sid
+            or not self.config.api_key
+        ):
             messagebox.showerror(
                 "Ошибка",
                 "Не заданы данные конфигурации. Работа приложения завершена.",
@@ -125,9 +151,10 @@ class BotApp:
     def ensure_config(self) -> Optional[BotConfig]:
         loaded_config = BotConfig.load()
         token = loaded_config.token if loaded_config else ""
+        api_sid = loaded_config.api_sid if loaded_config else ""
         api_key = loaded_config.api_key if loaded_config else ""
 
-        if token and api_key:
+        if token and api_sid and api_key:
             return loaded_config
 
         if not token:
@@ -136,13 +163,19 @@ class BotApp:
             if not token:
                 return None
 
+        if not api_sid:
+            dialog = ApiSidDialog(self.root)
+            api_sid = dialog.result or ""
+            if not api_sid:
+                return None
+
         if not api_key:
             dialog = ApiKeyDialog(self.root)
             api_key = dialog.result or ""
             if not api_key:
                 return None
 
-        config = BotConfig(token=token, api_key=api_key)
+        config = BotConfig(token=token, api_sid=api_sid, api_key=api_key)
         config.save()
         return config
 
@@ -180,14 +213,15 @@ class BotApp:
         logging.info("Инициализация телеграм-бота")
 
         try:
-            configuration = cloudmersive_barcode_api_client.Configuration()
-            configuration.api_key["Apikey"] = config.api_key
-            api_client = cloudmersive_barcode_api_client.ApiClient(configuration)
-            self._barcode_api = cloudmersive_barcode_api_client.BarcodeScanApi(api_client)
+            configuration = aspose_barcode_cloud.Configuration()
+            configuration.api_key["app_sid"] = config.api_sid
+            configuration.api_key["api_key"] = config.api_key
+            api_client = aspose_barcode_cloud.ApiClient(configuration)
+            self._barcode_api = aspose_barcode_cloud.BarcodeApi(api_client)
         except Exception as exc:
-            logging.exception("Не удалось инициализировать Cloudmersive API клиент: %s", exc)
-            self.update_status("Ошибка инициализации Cloudmersive API")
-            messagebox.showerror("Ошибка", f"Не удалось инициализировать Cloudmersive API: {exc}")
+            logging.exception("Не удалось инициализировать Aspose Barcode Cloud клиент: %s", exc)
+            self.update_status("Ошибка инициализации Aspose Barcode Cloud")
+            messagebox.showerror("Ошибка", f"Не удалось инициализировать Aspose Barcode Cloud: {exc}")
             return
 
         application = ApplicationBuilder().token(config.token).concurrent_updates(True).build()
@@ -271,7 +305,7 @@ class BotApp:
 
         if self._barcode_api is None:
             await message.reply_text("Сервис распознавания недоступен.")
-            logging.error("Cloudmersive API клиент не инициализирован")
+            logging.error("Aspose Barcode Cloud клиент не инициализирован")
             return
 
         try:
@@ -281,7 +315,7 @@ class BotApp:
                 logging.info("Код успешно распознан: %s", decoded_text)
             else:
                 await message.reply_text("Не удалось распознать DataMatrix на изображении.")
-                logging.warning("DataMatrix не найден на изображении")
+                logging.warning("Aspose Barcode Cloud не нашел DataMatrix на изображении")
         finally:
             try:
                 tmp_path.unlink(missing_ok=True)
@@ -290,42 +324,70 @@ class BotApp:
 
 
 def decode_datamatrix(
-    image_path: Path, barcode_api: cloudmersive_barcode_api_client.BarcodeScanApi
+    image_path: Path, barcode_api: "aspose_barcode_cloud.BarcodeApi"
 ) -> Optional[str]:
     try:
+        image_data = image_path.read_bytes()
+    except Exception as exc:
+        logging.exception("Не удалось прочитать изображение для Aspose Barcode Cloud: %s", exc)
+        return None
+
+    try:
+        models_module = getattr(aspose_barcode_cloud, "models", None)
+        request = None
+        if models_module is not None:
+            request_cls = getattr(models_module, "PostBarcodeRecognizeFromUrlOrContentRequest", None)
+            if request_cls is not None:
+                request = request_cls(
+                    type="DataMatrix",
+                    preset="HighPerformance",
+                    fast_scan_only=False,
+                    image=image_data,
+                )
+
+        if request is not None:
+            response = barcode_api.post_barcode_recognize_from_url_or_content(request)
+        else:
+            response = barcode_api.post_barcode_recognize_from_url_or_content(
+                type="DataMatrix",
+                preset="HighPerformance",
+                fast_scan_only=False,
+                image=image_data,
+            )
         response = barcode_api.barcode_scan_image(image_file=str(image_path))
     except ApiException as exc:
-        logging.error("Ошибка Cloudmersive API при распознавании: %s", exc)
+        logging.error("Ошибка Aspose Barcode Cloud при распознавании: %s", exc)
         return None
     except Exception as exc:
-        logging.exception("Не удалось отправить изображение в Cloudmersive API: %s", exc)
+        logging.exception("Не удалось отправить изображение в Aspose Barcode Cloud: %s", exc)
         return None
 
     if response is None:
-        logging.warning("Пустой ответ от Cloudmersive API")
+        logging.warning("Пустой ответ от Aspose Barcode Cloud")
         return None
 
     barcodes = (
         getattr(response, "barcodes", None)
-        or getattr(response, "Barcodes", None)
+        or getattr(response, "BarcodeList", None)
         or getattr(response, "barcode_results", None)
         or getattr(response, "BarcodeResults", None)
     )
 
     if not barcodes:
-        logging.info("Cloudmersive API не вернул распознанные штрихкоды")
+        logging.info("Aspose Barcode Cloud не вернул распознанные штрихкоды")
         return None
 
     for barcode in barcodes:
         value = (
             getattr(barcode, "barcode_value", None)
             or getattr(barcode, "BarcodeValue", None)
-            or getattr(barcode, "value", None)
+            or getattr(barcode, "text", None)
+            or getattr(barcode, "CodeText", None)
         )
         if value:
             return str(value)
 
-    logging.info("Cloudmersive API не предоставил текст распознанного кода")
+    logging.info("Aspose Barcode Cloud не предоставил текст распознанного кода")
     return None
 
 
