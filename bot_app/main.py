@@ -77,7 +77,22 @@ class BotConfig:
         logging.info("Конфигурация сохранена в config.json")
 
 
-class TokenDialog(simpledialog.Dialog):
+class ClipboardPasteMixin:
+    """Helper mixin that inserts clipboard text into Tk entry widgets."""
+
+    def paste_text_into(self, entry: tk.Entry) -> None:
+        try:
+            clipboard_text = entry.clipboard_get()
+        except tk.TclError:
+            messagebox.showwarning("Буфер обмена", "Буфер обмена не содержит текст")
+            return
+
+        if clipboard_text:
+            entry.delete(0, tk.END)
+            entry.insert(0, clipboard_text.strip())
+
+
+class TokenDialog(ClipboardPasteMixin, simpledialog.Dialog):
     def body(self, master):
         tk.Label(master, text="Введите токен телеграм-бота:").grid(row=0, column=0, padx=10, pady=10)
         master.grid_columnconfigure(0, weight=1)
@@ -139,12 +154,24 @@ class ApiSidDialog(simpledialog.Dialog):
         paste_button = tk.Button(master, text="Вставить", command=self.paste_from_clipboard)
         paste_button.grid(row=1, column=1, padx=(5, 10), pady=(0, 10))
         self.entry = tk.Entry(master, width=50, show="*")
-        self.entry.grid(row=1, column=0, padx=10)
+        self.entry.grid(row=1, column=0, padx=(10, 0), pady=(0, 10), sticky="ew")
+
+        paste_button = tk.Button(
+            master,
+            text="Вставить",
+            command=lambda: self.paste_text_into(self.entry),
+        )
+        paste_button.grid(row=1, column=1, padx=(5, 10), pady=(0, 10))
         return self.entry
 
     def apply(self):
         self.result = self.entry.get().strip()
 
+class AsposeCredentialsDialog(ClipboardPasteMixin, simpledialog.Dialog):
+    def __init__(self, master, api_sid: str = "", api_key: str = ""):
+        self._initial_sid = api_sid
+        self._initial_key = api_key
+        super().__init__(master)
     def paste_from_clipboard(self) -> None:
         try:
             clipboard_text = self.entry.clipboard_get()
@@ -157,15 +184,49 @@ class ApiSidDialog(simpledialog.Dialog):
             self.entry.insert(0, clipboard_text.strip())
 
 
-class ApiKeyDialog(simpledialog.Dialog):
     def body(self, master):
+        master.grid_columnconfigure(0, weight=1)
+
+        tk.Label(master, text="Введите Aspose Barcode Cloud App SID:").grid(
+            row=0, column=0, columnspan=2, padx=10, pady=(10, 0), sticky="w"
+        )
+        self.sid_entry = tk.Entry(master, width=50, show="*")
+        self.sid_entry.grid(row=1, column=0, padx=(10, 0), pady=(0, 10), sticky="ew")
+        sid_paste = tk.Button(
+            master,
+            text="Вставить",
+            command=lambda: self.paste_text_into(self.sid_entry),
+        )
+        sid_paste.grid(row=1, column=1, padx=(5, 10), pady=(0, 10))
+
+        tk.Label(master, text="Введите Aspose Barcode Cloud App Key:").grid(
+            row=2, column=0, columnspan=2, padx=10, pady=(0, 0), sticky="w"
+        )
+        self.key_entry = tk.Entry(master, width=50, show="*")
+        self.key_entry.grid(row=3, column=0, padx=(10, 0), pady=(0, 10), sticky="ew")
+        key_paste = tk.Button(
+            master,
+            text="Вставить",
+            command=lambda: self.paste_text_into(self.key_entry),
+        )
+        key_paste.grid(row=3, column=1, padx=(5, 10), pady=(0, 10))
+
+        if self._initial_sid:
+            self.sid_entry.insert(0, self._initial_sid)
+        if self._initial_key:
+            self.key_entry.insert(0, self._initial_key)
+
+        return self.sid_entry
         tk.Label(master, text="Введите Aspose Barcode Cloud App Key:").grid(row=0, column=0, padx=10, pady=10)
         self.entry = tk.Entry(master, width=50, show="*")
         self.entry.grid(row=1, column=0, padx=10)
         return self.entry
 
     def apply(self):
-        self.result = self.entry.get().strip()
+        self.result = (
+            self.sid_entry.get().strip(),
+            self.key_entry.get().strip(),
+        )
 
 
 class BotApp:
@@ -219,6 +280,15 @@ class BotApp:
             dialog = TokenDialog(self.root)
             token = dialog.result or ""
             if not token:
+                return None
+
+        if not api_sid or not api_key:
+            dialog = AsposeCredentialsDialog(self.root, api_sid=api_sid, api_key=api_key)
+            if not dialog.result:
+                return None
+
+            api_sid, api_key = dialog.result
+            if not api_sid or not api_key:
                 return None
 
         if not api_sid:
