@@ -37,7 +37,7 @@ python -m pip install -r requirements.txt pyinstaller
 if errorlevel 1 goto :pip_fail
 
 echo [INFO] Building Windows executable with PyInstaller...
-pyinstaller --noconfirm --onefile --windowed bot_app\main.py --name datamatrix_bot
+pyinstaller --noconfirm --onefile --windowed bot_app\main.py --name datamatrix_bot --collect-binaries pylibdmtx
 if errorlevel 1 (
     echo [ERROR] PyInstaller build failed.
     pause
